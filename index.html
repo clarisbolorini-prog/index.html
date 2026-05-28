@@ -22,7 +22,7 @@
     <!-- Recharts (Gráficos) -->
     <script src="https://unpkg.com/recharts/umd/Recharts.js"></script>
 
-    <!-- SheetJS (Versão cravada na 0.20.1 para evitar quebras por atualizações instáveis) -->
+    <!-- SheetJS -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 
     <style>
@@ -88,24 +88,20 @@
             return isNaN(num) ? 0 : num;
           };
 
-          // Analisa a coluna anômala de data (transforma Excel Serial ou String CSV em Mês)
           const getMonthName = (val) => {
               if (!val) return "TODOS";
               const MONTHS = ["JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
 
-              // Se a data vier como serial do Excel (ex: 44562)
               if (typeof val === 'number') {
                   const date = new Date(Math.round((val - 25569) * 86400 * 1000));
                   return MONTHS[date.getUTCMonth()];
               }
-              // Se a data vier como string (ex: "15/04/2023" do CSV)
               if (typeof val === 'string') {
                   const parts = val.split(/[-/]/);
                   if (parts.length >= 3) {
                       const m = parts[0].length === 4 ? parseInt(parts[1], 10) : parseInt(parts[1], 10);
                       if (!isNaN(m) && m >= 1 && m <= 12) return MONTHS[m - 1];
                   }
-                  // Busca brutal pelo nome do mês dentro da string
                   for (let m of MONTHS) {
                       if (val.toUpperCase().includes(m)) return m;
                   }
@@ -122,7 +118,6 @@
                   const sheet = workbook.Sheets[mesName];
                   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 
-                  // Isola e processa a aba ATENDIMENTOS (não entra como mês)
                   if (mesName.toUpperCase().trim() === 'ATENDIMENTOS') {
                       if (rows.length < 2) return;
                       const headers = rows[0].map(h => h ? String(h).toLowerCase().trim() : '');
@@ -131,9 +126,8 @@
                       const idxStatus = headers.findIndex(h => h.includes('status') || h.includes('recuperado') || h.includes('recuperação') || h.includes('resultado'));
                       const idxRegiao = headers.findIndex(h => h.includes('estado') || h.includes('uf') || h.includes('região') || h.includes('regiao'));
                       
-                      // Índices fixados e cravados conforme sua instrução, ignorando o texto do cabeçalho
-                      const idxCliente = 4; // Coluna E
-                      const idxData = 25;   // Coluna Z
+                      const idxCliente = 4;
+                      const idxData = 25;
 
                       for (let i = 1; i < rows.length; i++) {
                           const row = rows[i];
@@ -143,14 +137,11 @@
                           const status = idxStatus !== -1 && row[idxStatus] ? String(row[idxStatus]).trim() : "Indefinido";
                           const regiao = idxRegiao !== -1 && row[idxRegiao] ? String(row[idxRegiao]).trim().toUpperCase() : "NI";
                           
-                          // Leitura forçada nas colunas E e Z
                           const cliente = row[idxCliente] ? String(row[idxCliente]).trim() : "Não Informado";
                           const rawDate = row[idxData];
                           
-                          // Extrai o mês correspondente da célula (seja serial Excel ou String)
                           const mesFormatado = rawDate ? getMonthName(rawDate) : "TODOS";
                           
-                          // Extração de Data Exata para cálculo de ociosidade
                           let dataExata = null;
                           if (typeof rawDate === 'number') {
                               dataExata = new Date(Math.round((rawDate - 25569) * 86400 * 1000));
@@ -170,10 +161,9 @@
                               atendimentosResult.push({ apoio, status, regiao, mes: mesFormatado, cliente, dataExata });
                           }
                       }
-                      return; // Impede que ATENDIMENTOS seja listado como uma aba de mês normal
+                      return; 
                   }
 
-                  // Dados Gerais das abas mensais de faturamento
                   for (let i = 2; i < rows.length; i++) {
                     const row = rows[i];
                     if (!row || row.length < 14) continue;
@@ -182,21 +172,18 @@
                     const ocorrencia = row[1] ? String(row[1]).trim() : "Não Informado";
                     const os = row[3] ? String(row[3]).trim() : "";
                     
-                    // Ajuste de índices: A=0, B=1, C=2, D=3, E=4, F=5, G=6, H=7, I=8, J=9, K=10, L=11, M=12, N=13
-                    // Prestador (Pago): Acionamento E(4), Pedágio H(7), Hora F(5), KM G(6)
                     const acionamentoPago = parseCurrency(row[4]);
                     const pedagioPago = parseCurrency(row[7]);
                     const horaPago = parseCurrency(row[5]);
                     const kmPago = parseCurrency(row[6]);
                     
-                    // Cliente (Cobrado): Acionamento J(9), Pedágio M(12), Hora K(10), KM L(11)
                     const acionamentoCobrado = parseCurrency(row[9]);
                     const pedagioCobrado = parseCurrency(row[12]);
                     const horaCobrado = parseCurrency(row[10]);
                     const kmCobrado = parseCurrency(row[11]);
                     
-                    const custo = parseCurrency(row[8]); // Custo total na coluna I
-                    const faturado = parseCurrency(row[13]); // Faturado total na coluna N
+                    const custo = parseCurrency(row[8]);
+                    const faturado = parseCurrency(row[13]);
 
                     if (!cliente || !os) continue;
 
@@ -286,8 +273,6 @@
             });
           }, [selectedClient, selectedMonth, data]);
 
-          // CORREÇÃO ESTRATÉGICA: O filtro de meses agora varre TODA a base (Faturamento + Atendimentos) 
-          // e ordena cronologicamente de forma rígida.
           const availableMonths = useMemo(() => {
             const mesesFaturamento = data.map(d => d.mes);
             const mesesAtendimentos = atendimentosData.map(d => d.mes);
@@ -343,14 +328,12 @@
           const formatBRL = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
           const formatPercent = (val) => new Intl.NumberFormat('pt-BR', { style: 'percent', minimumFractionDigits: 1 }).format(val);
 
-          // Análise de Frequência de Acionamentos da aba ATENDIMENTOS
           const clientActivity = useMemo(() => {
               if (!atendimentosData || atendimentosData.length === 0) return { list: [], mesAtualStr: 'N/A', mesAnteriorStr: 'N/A' };
 
               const today = new Date();
               const ordemMeses = ["JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
 
-              // Descobre o mês mais recente cadastrado para definir o "Atual" e o "Anterior"
               let maxMonthIdx = -1;
               atendimentosData.forEach(d => {
                   const idx = ordemMeses.indexOf(d.mes);
@@ -363,7 +346,7 @@
               const agg = {};
               atendimentosData.forEach(d => {
                   const cName = d.cliente;
-                  if (cName === "Não Informado") return; // Filtra lixo
+                  if (cName === "Não Informado") return;
 
                   if (!agg[cName]) {
                       agg[cName] = { cliente: cName, ultimaData: null, total: 0, mesAtual: 0, mesAnterior: 0 };
@@ -385,20 +368,27 @@
                   let dataStr = "N/D";
                   if (item.ultimaData) {
                       const diffTime = Math.floor((today - item.ultimaData) / (1000 * 60 * 60 * 24));
-                      dias = diffTime >= 0 ? diffTime : 0; // Previne datas futuras erradas do excel
+                      dias = diffTime >= 0 ? diffTime : 0; 
                       dataStr = item.ultimaData.toLocaleDateString('pt-BR');
                   }
                   return { ...item, diasSemAcionar: dias, dataUltimoAcionamento: dataStr };
-              }).sort((a, b) => b.total - a.total); // Ordena pelo maior volume total
+              }).sort((a, b) => {
+                  // Invertendo a ordem: maior numero de dias sem acionar primeiro
+                  const diasA = a.diasSemAcionar === "N/D" ? -1 : a.diasSemAcionar;
+                  const diasB = b.diasSemAcionar === "N/D" ? -1 : b.diasSemAcionar;
+                  
+                  if (diasB === diasA) {
+                      return b.total - a.total; // Se empatar nos dias, quem tem maior volume histórico fica acima
+                  }
+                  return diasB - diasA; // Maior quantidade de dias ganha prioridade
+              });
 
               return { list, mesAtualStr, mesAnteriorStr };
           }, [atendimentosData]);
 
-          // Análises da aba Atendimentos (Agora com Filtro de Mês Ativo e Regra Binária)
           const analisesStats = useMemo(() => {
             if (atendimentosData.length === 0) return null;
 
-            // Filtro cruzado de mês. Exige que o mês da ocorrência bata com o filtro selecionado globalmente.
             const baseData = selectedMonth === 'Todos' 
                 ? atendimentosData 
                 : atendimentosData.filter(d => d.mes === selectedMonth.toUpperCase());
@@ -406,7 +396,7 @@
             if (baseData.length === 0) return { rankingApoios: [], statusData: [], regiaoData: [], total: 0 };
 
             const apoiosMap = {};
-            const statusMap = { "Recuperado": 0, "Não Recuperado": 0 }; // Regra Estratégica Binária
+            const statusMap = { "Recuperado": 0, "Não Recuperado": 0 };
             const regiaoMap = {};
 
             baseData.forEach(d => {
@@ -415,7 +405,6 @@
                 
                 const s = String(d.status).toLowerCase();
                 
-                // Mapeia sucesso se encontrar palavras-chave afirmativas, ignorando strings com negativas
                 const isSuccess = (s.includes('recuperado') || s.includes('localizado') || s.includes('sucesso')) && !s.includes('não') && !s.includes('nao');
 
                 if (isSuccess) {
@@ -437,12 +426,11 @@
                 .sort((a, b) => b.total - a.total)
                 .slice(0, 15);
 
-            // Monta o array da Pizza apenas com os binários, amarrando cores para evitar confusão visual
             const statusData = Object.entries(statusMap)
                 .map(([name, value]) => ({
                     name, 
                     value, 
-                    color: name === "Recuperado" ? '#10b981' : '#ef4444' // Verde e Vermelho
+                    color: name === "Recuperado" ? '#10b981' : '#ef4444'
                 }));
 
             const regiaoData = Object.values(regiaoMap)
@@ -458,7 +446,6 @@
             }
           }, [selectedClient, availableMonths, selectedMonth]);
 
-          // Tela de Upload Inicial
           if (!isLoaded) {
             return (
               <div className="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 text-center bg-[#020617] text-white">
@@ -512,7 +499,6 @@
             );
           }
 
-          // Tela Principal do Dashboard
           return (
             <div className="min-h-screen p-4 md:p-10 font-sans bg-[#020617] text-white">
               <header className="mb-10 flex flex-col xl:flex-row justify-between items-start xl:items-center border-b border-white/10 pb-10 gap-6">
@@ -930,7 +916,6 @@
                       </div>
                     </div>
 
-                    {/* GRÁFICO DE CONCENTRAÇÃO */}
                     <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl">
                         <h4 className="text-sm font-black uppercase text-white tracking-[0.2em] mb-8">Concentração de Faturamento por Cliente (%)</h4>
                         <div className="h-[400px]">
@@ -977,7 +962,6 @@
                         </div>
                     </div>
 
-                    {/* TABELA DE CRUZAMENTO DE DADOS (PAGO VS COBRADO) */}
                     <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl">
                         <h4 className="text-sm font-black uppercase text-white tracking-[0.2em] mb-8">Cruzamento: acionamento - km - hora - pedágio</h4>
                         {(() => {
@@ -1083,7 +1067,6 @@
                         })()}
                     </div>
 
-                    {/* NOVO QUADRO: RENTABILIDADE POR TIPO DE OCORRÊNCIA */}
                     <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl">
                         <h4 className="text-sm font-black uppercase text-white tracking-[0.2em] mb-8">Rentabilidade por Tipo de Ocorrência</h4>
                         <div className="overflow-x-auto custom-scrollbar">
@@ -1169,7 +1152,6 @@
                         )}
                     </div>
 
-                    {/* NOVO QUADRO: MONITORAMENTO DE RETENÇÃO E FREQUÊNCIA DE CLIENTES */}
                     <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl mt-8">
                         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                             <div>
