@@ -33,7 +33,7 @@
         }
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: #0f172a; border-radius: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #10b981; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #d97706; border-radius: 4px; }
         
         /* Remove o ícone de seta do datalist em alguns navegadores para ficar mais limpo */
         input::-webkit-calendar-picker-indicator {
@@ -63,6 +63,7 @@
         const { useState, useMemo, useEffect } = React;
         const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList, ComposedChart, Line, Legend, PieChart, Pie } = window.Recharts;
 
+        // Ícones em SVG nativo para compatibilidade total e sem dependências externas
         const AlertTriangle = ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>;
         const Filter = ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>;
         const Award = ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg>;
@@ -76,49 +77,85 @@
         const LinkIcon = ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>;
         const ChevronDown = ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="6 9 12 15 18 9"/></svg>;
         const PieChartIcon = ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>;
+        const Truck = ({size=24, className=""}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="1" y="3" width="15" height="13" rx="2" ry="2" /><polygon points="16 8 20 8 23 11 23 16 16 16 16 8" /><circle cx="5.5" cy="18.5" r="2.5" /><circle cx="18.5" cy="18.5" r="2.5" /></svg>;
 
         const TAX_RATE = 0.20;
+        const CRITICAL_MARGIN_THRESHOLD = 0.16; // Margem operacional de alerta ajustada para 16%
 
         const App = () => {
           const [data, setData] = useState([]);
           const [atendimentosData, setAtendimentosData] = useState([]);
+          const [reboqueData, setReboqueData] = useState([]); // Base financeira consolidada de reboques
+          const [atendimentosReboqueData, setAtendimentosReboqueData] = useState([]); // Base granular de atendimentos de reboque
           const [activeTab, setActiveTab] = useState('geral');
+          const [reboqueSubTab, setReboqueSubTab] = useState('geral'); // Subtabs internas de reboque
           const [selectedClient, setSelectedClient] = useState('');
           const [selectedMonth, setSelectedMonth] = useState('Todos');
           const [isLoaded, setIsLoaded] = useState(false);
           const [sheetUrl, setSheetUrl] = useState('');
           const [isLoadingUrl, setIsLoadingUrl] = useState(false);
           const [isClientListOpen, setIsClientListOpen] = useState(false);
+          const [criticalSearch, setCriticalSearch] = useState(''); // Busca na auditoria de reboques
 
-          // Novos estados para controlar a exibição das tabelas (Accordion UI)
+          // Controle de visualização de blocos expansíveis (Acordeons)
           const [showCruzamento, setShowCruzamento] = useState(false);
           const [showFaturamento, setShowFaturamento] = useState(false);
           const [showBaseAtiva, setShowBaseAtiva] = useState(false);
 
+          // Função de parsing financeiro robusta e segura contra erros de formato regional ou float bruto
           const parseCurrency = (value) => {
             if (value === undefined || value === null) return 0;
             if (typeof value === 'number') return value;
-            const cleanValue = String(value).replace('R$', '').replace(/\s/g, '').replace(/\./g, '').replace(',', '.').trim();
-            const num = parseFloat(cleanValue);
+            let valStr = String(value).replace('R$', '').trim();
+            
+            if (valStr.includes(',') && valStr.includes('.')) {
+              valStr = valStr.replace(/\./g, '').replace(',', '.');
+            } else if (valStr.includes(',')) {
+              valStr = valStr.replace(',', '.');
+            }
+            
+            const num = parseFloat(valStr);
             return isNaN(num) ? 0 : num;
           };
 
+          // Extrator de meses adaptativo reconstruído para evitar conversões indesejadas de números de série do Excel
           const getMonthName = (val) => {
-              if (!val) return "TODOS";
+              if (val === undefined || val === null || val === '') return "TODOS";
               const MONTHS = ["JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
 
-              if (typeof val === 'number') {
-                  const date = new Date(Math.round((val - 25569) * 86400 * 1000));
+              if (val instanceof Date) {
+                  return MONTHS[val.getMonth()];
+              }
+              
+              // Se for um número (ou uma string representando o serial de data do Excel)
+              const numVal = Number(val);
+              if (!isNaN(numVal) && numVal > 10000 && numVal < 100000) {
+                  const date = new Date(Math.round((numVal - 25569) * 86400 * 1000));
                   return MONTHS[date.getUTCMonth()];
               }
+
               if (typeof val === 'string') {
-                  const parts = val.split(/[-/]/);
-                  if (parts.length >= 3) {
-                      const m = parts[0].length === 4 ? parseInt(parts[1], 10) : parseInt(parts[1], 10);
-                      if (!isNaN(m) && m >= 1 && m <= 12) return MONTHS[m - 1];
-                  }
+                  const trimmed = val.trim();
+                  if (trimmed.toUpperCase() === 'DATA' || trimmed.toUpperCase().includes('EXECUÇÃO') || trimmed.toUpperCase().includes('EXECUCAO')) return 'TODOS';
+                  
+                  // Verifica se a string já contém o nome do mês por extenso
                   for (let m of MONTHS) {
-                      if (val.toUpperCase().includes(m)) return m;
+                      if (trimmed.toUpperCase().includes(m)) return m;
+                  }
+                  
+                  // Se for numérico (ISO ou data formatada), divide pelos separadores de data
+                  const parts = trimmed.split(/\D+/).filter(Boolean);
+                  if (parts.length >= 2) {
+                      if (parts[0].length === 4) { // Formato YYYY-MM-DD
+                          const m = parseInt(parts[1], 10);
+                          if (m >= 1 && m <= 12) return MONTHS[m - 1];
+                      } else if (parts[2] && parts[2].length === 4) { // Formato DD/MM/YYYY
+                          const m = parseInt(parts[1], 10);
+                          if (m >= 1 && m <= 12) return MONTHS[m - 1];
+                      } else { // Fallback para formatos sem ano com 4 dígitos
+                          const m = parseInt(parts[1], 10);
+                          if (m >= 1 && m <= 12) return MONTHS[m - 1];
+                      }
                   }
               }
               return "TODOS";
@@ -128,12 +165,16 @@
             try {
                 const result = [];
                 const atendimentosResult = [];
+                const reboqueResult = [];
+                const atendimentosReboqueResult = [];
 
                 workbook.SheetNames.forEach(mesName => {
                   const sheet = workbook.Sheets[mesName];
                   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+                  const sheetKey = mesName.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, '_').trim();
 
-                  if (mesName.toUpperCase().trim() === 'ATENDIMENTOS') {
+                  // Tratamento da aba de ATENDIMENTOS (Geral)
+                  if (sheetKey === 'ATENDIMENTOS') {
                       if (rows.length < 2) return;
                       const headers = rows[0].map(h => h ? String(h).toLowerCase().trim() : '');
                       
@@ -179,6 +220,196 @@
                       return; 
                   }
 
+                  // Tratamento da NOVA ABA de "Atendimentos de reboque" / "Atendimentos de reboques"
+                  if (sheetKey.includes('ATENDIMENTOS_DE_REBOQUE') || sheetKey.includes('ATENDIMENTOS_DE_REBOQUES') || sheetKey.includes('ATENDIMENTOS_REBOQUE')) {
+                      if (rows.length < 2) return;
+                      
+                      let headerRowIdx = -1;
+                      for (let r = 0; r < Math.min(10, rows.length); r++) {
+                          if (rows[r]) {
+                              const rowLower = rows[r].map(cell => cell ? String(cell).toLowerCase().trim() : '');
+                              if (rowLower.includes('data execucao servico') || rowLower.includes('data execução serviço') || rowLower.includes('prestador') || rowLower.includes('placa')) {
+                                  headerRowIdx = r;
+                                  break;
+                              }
+                          }
+                      }
+                      
+                      if (headerRowIdx === -1) headerRowIdx = 0;
+                      
+                      const headers = rows[headerRowIdx].map(h => h ? String(h).toLowerCase().trim() : '');
+                      
+                      const idxData = headers.findIndex(h => h.includes('data execucao') || h.includes('data execução') || h === 'data');
+                      const idxCliente = headers.findIndex(h => h.includes('beneficiario') || h.includes('beneficiário') || h === 'cliente');
+                      const idxPlaca = headers.indexOf('placa');
+                      const idxPrestador = headers.findIndex(h => h === 'prestador' || h === 'guincheiro');
+                      const idxUF = headers.findIndex(h => h === 'uf origem' || h === 'estado' || h === 'uf');
+                      
+                      const colData = idxData !== -1 ? idxData : 0;
+                      const colCliente = idxCliente !== -1 ? idxCliente : 1;
+                      const colPlaca = idxPlaca !== -1 ? idxPlaca : 2;
+                      const colPrestador = idxPrestador !== -1 ? idxPrestador : 7;
+                      const colUF = idxUF !== -1 ? idxUF : 29;
+
+                      for (let i = headerRowIdx + 1; i < rows.length; i++) {
+                          const row = rows[i];
+                          if (!row || row.length < 3) continue;
+                          
+                          const rawData = row[colData];
+                          const cliente = row[colCliente] ? String(row[colCliente]).trim() : '';
+                          const prestador = row[colPrestador] ? String(row[colPrestador]).trim() : '';
+                          const estado = row[colUF] ? String(row[colUF]).trim().toUpperCase() : 'N/A';
+                          const placa = row[colPlaca] ? String(row[colPlaca]).trim() : '';
+                          
+                          if (!cliente && !prestador && !placa) continue;
+                          if (cliente.toLowerCase() === 'nome do beneficiário' || prestador.toLowerCase() === 'prestador') continue;
+                          
+                          const mes = getMonthName(rawData);
+                          
+                          let dataStr = '';
+                          if (rawData instanceof Date) {
+                              dataStr = rawData.toLocaleDateString('pt-BR');
+                          } else if (typeof rawData === 'number') {
+                              const dObj = new Date(Math.round((rawData - 25569) * 86400 * 1000));
+                              dataStr = dObj.toLocaleDateString('pt-BR');
+                          } else {
+                              const strVal = String(rawData).trim();
+                              const parts = strVal.split(/\D+/).filter(Boolean);
+                              if (parts.length >= 3 && parts[0].length === 4) {
+                                  dataStr = `${parts[2]}/${parts[1]}/${parts[0]}`;
+                              } else {
+                                  dataStr = strVal;
+                              }
+                          }
+
+                          atendimentosReboqueResult.push({
+                              dataStr,
+                              mes,
+                              cliente,
+                              prestador,
+                              estado,
+                              placa
+                          });
+                      }
+                      return;
+                  }
+
+                  // Tratamento da aba consolidada de REBOQUE (Dados Financeiros por Placa)
+                  if (sheetKey === 'REBOQUE') {
+                      if (rows.length < 2) return;
+                      let headerRowIdx = -1;
+                      for (let r = 0; r < Math.min(10, rows.length); r++) {
+                          if (rows[r]) {
+                              const rowLower = rows[r].map(cell => cell ? String(cell).toLowerCase().trim() : '');
+                              if (rowLower.includes('data') && rowLower.includes('guincheiro') && rowLower.includes('placa')) {
+                                  headerRowIdx = r;
+                                  break;
+                              }
+                          }
+                      }
+                      
+                      if (headerRowIdx === -1) {
+                          for (let r = 0; r < Math.min(10, rows.length); r++) {
+                              if (rows[r]) {
+                                  const rowLower = rows[r].map(cell => cell ? String(cell).toLowerCase().trim() : '');
+                                  if (rowLower.includes('guincheiro') || rowLower.includes('placa') || rowLower.includes('data')) {
+                                      headerRowIdx = r;
+                                      break;
+                                  }
+                              }
+                          }
+                      }
+                      
+                      if (headerRowIdx === -1) headerRowIdx = 1; // Fallback estrutural
+                      
+                      const headers = rows[headerRowIdx].map(h => h ? String(h).toLowerCase().trim() : '');
+                      
+                      const idxData = headers.indexOf('data');
+                      const idxCliente = headers.indexOf('cliente');
+                      const idxGuincheiro = headers.indexOf('guincheiro');
+                      const idxEstado = headers.findIndex(h => h.includes('estado') || h.includes('uf') || h.includes('região') || h.includes('regiao'));
+                      const idxPlaca = headers.indexOf('placa');
+                      
+                      let idxValGuincheiro = -1;
+                      let idxValCliente = -1;
+                      
+                      headers.forEach((h, index) => {
+                          if (h.includes('valor') || h.includes('total')) {
+                              if (idxValGuincheiro === -1) {
+                                  idxValGuincheiro = index;
+                              } else {
+                                  idxValCliente = index;
+                              }
+                          }
+                      });
+                      
+                      const colData = idxData !== -1 ? idxData : 0;
+                      const colCliente = idxCliente !== -1 ? idxCliente : 1;
+                      const colGuincheiro = idxGuincheiro !== -1 ? idxGuincheiro : 2;
+                      const colEstado = idxEstado !== -1 ? idxEstado : 3;
+                      const colPlaca = idxPlaca !== -1 ? idxPlaca : 4;
+                      const colValGuincheiro = idxValGuincheiro !== -1 ? idxValGuincheiro : 5;
+                      const colValCliente = idxValCliente !== -1 ? idxValCliente : 6;
+
+                      for (let i = headerRowIdx + 1; i < rows.length; i++) {
+                          const row = rows[i];
+                          if (!row || row.length < 4) continue;
+                          
+                          const rawData = row[colData];
+                          const cliente = row[colCliente] ? String(row[colCliente]).trim() : '';
+                          const guincheiro = row[colGuincheiro] ? String(row[colGuincheiro]).trim() : '';
+                          const estado = row[colEstado] ? String(row[colEstado]).trim().toUpperCase() : 'N/A';
+                          const placa = row[colPlaca] ? String(row[colPlaca]).trim() : '';
+                          const valorGuincheiro = parseCurrency(row[colValGuincheiro]);
+                          const valorCliente = parseCurrency(row[colValCliente]);
+                          
+                          if (!cliente && !guincheiro && !placa) continue;
+                          if (cliente.toLowerCase() === 'cliente' || guincheiro.toLowerCase() === 'guincheiro') continue;
+                          
+                          const mes = getMonthName(rawData);
+                          const impostos = valorCliente * TAX_RATE;
+                          const faturadoAjustado = valorCliente - impostos;
+                          const lucroLiquido = faturadoAjustado - valorGuincheiro;
+                          
+                          const margemLucro = valorCliente > 0 ? (lucroLiquido / valorCliente) : -1;
+                          const isPrejuizoOuCritico = (valorCliente === 0 && valorGuincheiro > 0) || (margemLucro < CRITICAL_MARGIN_THRESHOLD);
+                          
+                          let dataStr = '';
+                          if (rawData instanceof Date) {
+                              dataStr = rawData.toLocaleDateString('pt-BR');
+                          } else if (typeof rawData === 'number') {
+                              const dObj = new Date(Math.round((rawData - 25569) * 86400 * 1000));
+                              dataStr = dObj.toLocaleDateString('pt-BR');
+                          } else {
+                              const strVal = String(rawData).trim();
+                              const parts = strVal.split(/\D+/).filter(Boolean);
+                              if (parts.length >= 3 && parts[0].length === 4) {
+                                  dataStr = `${parts[2]}/${parts[1]}/${parts[0]}`;
+                              } else {
+                                  dataStr = strVal;
+                              }
+                          }
+
+                          reboqueResult.push({
+                              dataStr,
+                              mes,
+                              cliente,
+                              guincheiro,
+                              estado,
+                              placa,
+                              valorGuincheiro,
+                              valorCliente,
+                              impostos,
+                              faturadoAjustado,
+                              lucroLiquido,
+                              margemLucro,
+                              isPrejuizoOuCritico
+                          });
+                      }
+                      return;
+                  }
+
+                  // Tratamento padrão das abas mensais de faturamento
                   for (let i = 2; i < rows.length; i++) {
                     const row = rows[i];
                     if (!row || row.length < 14) continue;
@@ -220,6 +451,8 @@
                 
                 setData(result);
                 setAtendimentosData(atendimentosResult);
+                setReboqueData(reboqueResult);
+                setAtendimentosReboqueData(atendimentosReboqueResult);
                 setIsLoaded(true);
             } catch (error) {
                 alert("Erro ao ler os dados. Confirme se a planilha segue a estrutura padrão.");
@@ -276,9 +509,13 @@
             }
           };
 
+          // Consolidado inteligente de clientes integrando faturamento e reboques
           const clients = useMemo(() => {
-            return [...new Set(data.map(d => d.cliente))].sort();
-          }, [data]);
+            const clientesFaturamento = data.map(d => d.cliente);
+            const clientesReboque = reboqueData.map(d => d.cliente);
+            const clientesAtendimentosReboque = atendimentosReboqueData.map(d => d.cliente);
+            return [...new Set([...clientesFaturamento, ...clientesReboque, ...clientesAtendimentosReboque])].filter(Boolean).sort();
+          }, [data, reboqueData, atendimentosReboqueData]);
           
           const filteredData = useMemo(() => {
             return data.filter(d => {
@@ -288,16 +525,36 @@
             });
           }, [selectedClient, selectedMonth, data]);
 
+          // Filtragem adaptativa para a base financeira de reboques
+          const filteredReboqueData = useMemo(() => {
+            return reboqueData.filter(d => {
+              const matchClient = selectedClient === '' || d.cliente.toLowerCase().includes(selectedClient.toLowerCase());
+              const matchMonth = selectedMonth === 'Todos' || d.mes === selectedMonth.toUpperCase();
+              return matchClient && matchMonth;
+            });
+          }, [selectedClient, selectedMonth, reboqueData]);
+
+          // Filtragem adaptativa para os Atendimentos de Reboque
+          const filteredAtendimentosReboqueData = useMemo(() => {
+            return atendimentosReboqueData.filter(d => {
+              const matchClient = selectedClient === '' || d.cliente.toLowerCase().includes(selectedClient.toLowerCase());
+              const matchMonth = selectedMonth === 'Todos' || d.mes === selectedMonth.toUpperCase();
+              return matchClient && matchMonth;
+            });
+          }, [selectedClient, selectedMonth, atendimentosReboqueData]);
+
           const availableMonths = useMemo(() => {
             const mesesFaturamento = data.map(d => d.mes);
             const mesesAtendimentos = atendimentosData.map(d => d.mes);
-            const todosMeses = [...new Set([...mesesFaturamento, ...mesesAtendimentos])].filter(m => m && m !== "TODOS");
+            const mesesReboque = reboqueData.map(d => d.mes);
+            const mesesAtendimentosReboque = atendimentosReboqueData.map(d => d.mes);
+            const todosMeses = [...new Set([...mesesFaturamento, ...mesesAtendimentos, ...mesesReboque, ...mesesAtendimentosReboque])].filter(m => m && m !== "TODOS");
             
             const ordemMeses = ["JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
             todosMeses.sort((a, b) => ordemMeses.indexOf(a) - ordemMeses.indexOf(b));
 
             return ['Todos', ...todosMeses];
-          }, [data, atendimentosData]);
+          }, [data, atendimentosData, reboqueData, atendimentosReboqueData]);
 
           const stats = useMemo(() => {
             const totalCusto = filteredData.reduce((acc, curr) => acc + curr.custo, 0);
@@ -306,6 +563,178 @@
             const totalLucro = filteredData.reduce((acc, curr) => acc + curr.lucroLiquido, 0);
             return { totalCusto, totalFaturado, faturadoAjustado, totalLucro, totalOS: filteredData.length };
           }, [filteredData]);
+
+          // Cálculo dos KPIs de Reboque baseados na aba financeira + contagem real de atendimentos
+          const reboqueStats = useMemo(() => {
+            let faturamentoTotal = 0;
+            let custoTotal = 0;
+            let impostosTotal = 0;
+            let lucroLiquidoTotal = 0;
+            let reboquesCriticosCount = 0;
+
+            filteredReboqueData.forEach(d => {
+              faturamentoTotal += d.valorCliente;
+              custoTotal += d.valorGuincheiro;
+              impostosTotal += d.impostos;
+              lucroLiquidoTotal += d.lucroLiquido;
+              if (d.isPrejuizoOuCritico) {
+                reboquesCriticosCount += 1;
+              }
+            });
+
+            const margemMedia = faturamentoTotal > 0 ? (lucroLiquidoTotal / faturamentoTotal) : 0;
+            const totalViagens = atendimentosReboqueData.length > 0 ? filteredAtendimentosReboqueData.length : filteredReboqueData.length;
+
+            return {
+              faturamentoTotal,
+              custoTotal,
+              impostosTotal,
+              lucroLiquidoTotal,
+              reboquesCriticosCount,
+              margemMedia,
+              totalViagens
+            };
+          }, [filteredReboqueData, filteredAtendimentosReboqueData]);
+
+          // Agrupamentos e Dados de Gráficos do Reboque
+          const reboqueByMonth = useMemo(() => {
+            const agg = {};
+            
+            // Mapeia o faturamento financeiro vindo da aba REBOQUE
+            filteredReboqueData.forEach(d => {
+              if (d.mes === "TODOS" || !d.mes) return;
+              if (!agg[d.mes]) agg[d.mes] = { mes: d.mes, faturado: 0, custo: 0, lucro: 0, viagens: 0 };
+              agg[d.mes].faturado += d.valorCliente;
+              agg[d.mes].custo += d.valorGuincheiro;
+              agg[d.mes].lucro += d.lucroLiquido;
+            });
+            
+            // Se houver dados granulares de atendimentos, usamos eles para contar a volumetria física exata de viagens
+            if (atendimentosReboqueData.length > 0) {
+              filteredAtendimentosReboqueData.forEach(d => {
+                if (d.mes === "TODOS" || !d.mes) return;
+                if (!agg[d.mes]) agg[d.mes] = { mes: d.mes, faturado: 0, custo: 0, lucro: 0, viagens: 0 };
+                agg[d.mes].viagens += 1;
+              });
+            } else {
+              filteredReboqueData.forEach(d => {
+                if (d.mes === "TODOS" || !d.mes) return;
+                agg[d.mes].viagens += 1;
+              });
+            }
+
+            const ordemMeses = ["JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
+            return Object.values(agg).sort((a, b) => ordemMeses.indexOf(a.mes) - ordemMeses.indexOf(b.mes));
+          }, [filteredReboqueData, filteredAtendimentosReboqueData, atendimentosReboqueData]);
+
+          const reboqueByClient = useMemo(() => {
+            const agg = {};
+            
+            filteredReboqueData.forEach(d => {
+              if (!agg[d.cliente]) agg[d.cliente] = { cliente: d.cliente, faturado: 0, custo: 0, lucro: 0, viagens: 0 };
+              agg[d.cliente].faturado += d.valorCliente;
+              agg[d.cliente].custo += d.valorGuincheiro;
+              agg[d.cliente].lucro += d.lucroLiquido;
+            });
+
+            if (atendimentosReboqueData.length > 0) {
+              filteredAtendimentosReboqueData.forEach(d => {
+                if (!agg[d.cliente]) agg[d.cliente] = { cliente: d.cliente, faturado: 0, custo: 0, lucro: 0, viagens: 0 };
+                agg[d.cliente].viagens += 1;
+              });
+            } else {
+              filteredReboqueData.forEach(d => {
+                agg[d.cliente].viagens += 1;
+              });
+            }
+
+            return Object.values(agg).sort((a, b) => b.faturado - a.faturado).slice(0, 10);
+          }, [filteredReboqueData, filteredAtendimentosReboqueData, atendimentosReboqueData]);
+
+          // Demanda Geográfica de Reboques calculada a partir de "Atendimentos de reboque" (UF Origem) se disponível
+          const reboqueByRegion = useMemo(() => {
+            const agg = {};
+            
+            // 1. Levantamento de volumetria (Demandas por Estado) a partir de "Atendimentos de reboque" (coluna UF Origem)
+            if (atendimentosData.length > 0 && reboqueData.length > 0) {
+                filteredReboqueData.forEach(d => {
+                    const reg = d.estado || 'N/A';
+                    if (!agg[reg]) {
+                        agg[reg] = { estado: reg, total: 0, faturado: 0, custo: 0, lucro: 0 };
+                    }
+                    agg[reg].faturado += d.valorCliente;
+                    agg[reg].custo += d.valorGuincheiro;
+                    agg[reg].lucro += d.lucroLiquido;
+                });
+
+                if (atendimentosReboqueData.length > 0) {
+                    filteredAtendimentosReboqueData.forEach(d => {
+                        const reg = d.estado || 'N/A';
+                        if (!agg[reg]) {
+                            agg[reg] = { estado: reg, total: 0, faturado: 0, custo: 0, lucro: 0 };
+                        }
+                        agg[reg].total += 1;
+                    });
+                } else {
+                    filteredReboqueData.forEach(d => {
+                        const reg = d.estado || 'N/A';
+                        agg[reg].total += 1;
+                    });
+                }
+            } else {
+                // Fallback padrão se não houver a aba de atendimentos de reboque
+                filteredReboqueData.forEach(d => {
+                    const reg = d.estado || 'N/A';
+                    if (!agg[reg]) {
+                        agg[reg] = { estado: reg, total: 0, faturado: 0, custo: 0, lucro: 0 };
+                    }
+                    agg[reg].total += 1;
+                    agg[reg].faturado += d.valorCliente;
+                    agg[reg].custo += d.valorGuincheiro;
+                    agg[reg].lucro += d.lucroLiquido;
+                });
+            }
+
+            return Object.values(agg).sort((a, b) => b.total - a.total);
+          }, [filteredReboqueData, filteredAtendimentosReboqueData, atendimentosReboqueData, atendimentosData]);
+
+          // Ranking de guincheiros cruzado. O número de Chamados vem da aba granular de atendimentos.
+          const reboqueByGuincheiro = useMemo(() => {
+            const agg = {};
+            
+            // 1. Carrega o faturamento e custos da aba REBOQUE consolidada
+            filteredReboqueData.forEach(d => {
+              const guinch = d.guincheiro || 'N/A';
+              if (!agg[guinch]) {
+                agg[guinch] = { guincheiro: guinch, total: 0, faturado: 0, custo: 0, lucro: 0 };
+              }
+              agg[guinch].faturado += d.valorCliente;
+              agg[guinch].custo += d.valorGuincheiro;
+              agg[guinch].lucro += d.lucroLiquido;
+            });
+
+            // 2. Mapeia a quantidade real de chamados físicos da aba "Atendimentos de reboque"
+            if (atendimentosReboqueData.length > 0) {
+                filteredAtendimentosReboqueData.forEach(d => {
+                    const guinch = d.prestador || 'N/A';
+                    if (!agg[guinch]) {
+                        agg[guinch] = { guincheiro: guinch, total: 0, faturado: 0, custo: 0, lucro: 0 };
+                    }
+                    agg[guinch].total += 1;
+                });
+            } else {
+                // Fallback se não possuir a aba granular
+                filteredReboqueData.forEach(d => {
+                    const guinch = d.guincheiro || 'N/A';
+                    agg[guinch].total += 1;
+                });
+            }
+
+            return Object.values(agg).map(g => {
+                const rentabilidade = g.faturado > 0 ? (g.lucro / g.faturado) : 0;
+                return { ...g, rentabilidade };
+            }).sort((a, b) => b.rentabilidade - a.rentabilidade); // Ordenado do mais rentável para o menos rentável (custos otimizados)
+          }, [filteredReboqueData, filteredAtendimentosReboqueData, atendimentosReboqueData]);
 
           const serviceDistribution = useMemo(() => {
             const counts = {};
@@ -388,14 +817,13 @@
                   }
                   return { ...item, diasSemAcionar: dias, dataUltimoAcionamento: dataStr };
               }).sort((a, b) => {
-                  // Invertendo a ordem: maior numero de dias sem acionar primeiro
                   const diasA = a.diasSemAcionar === "N/D" ? -1 : a.diasSemAcionar;
                   const diasB = b.diasSemAcionar === "N/D" ? -1 : b.diasSemAcionar;
                   
                   if (diasB === diasA) {
-                      return b.total - a.total; // Se empatar nos dias, quem tem maior volume histórico fica acima
+                      return b.total - a.total;
                   }
-                  return diasB - diasA; // Maior quantidade de dias ganha prioridade
+                  return diasB - diasA;
               });
 
               return { list, mesAtualStr, mesAnteriorStr };
@@ -419,7 +847,6 @@
                 apoiosMap[d.apoio].total += 1;
                 
                 const s = String(d.status).toLowerCase();
-                
                 const isSuccess = (s.includes('recuperado') || s.includes('localizado') || s.includes('sucesso')) && !s.includes('não') && !s.includes('nao');
 
                 if (isSuccess) {
@@ -498,7 +925,7 @@
                     <div className="flex items-center gap-4 w-full px-4">
                         <div className="h-px bg-slate-800 flex-1"></div>
                         <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest">OU</span>
-                        <div class="h-px bg-slate-800 flex-1"></div>
+                        <div className="h-px bg-slate-800 flex-1"></div>
                     </div>
 
                     <label className="cursor-pointer group relative block">
@@ -614,6 +1041,9 @@
                 </button>
                 <button onClick={() => setActiveTab('faturamento')} className={`flex items-center gap-2 px-8 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${activeTab === 'faturamento' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/40' : 'text-slate-400 hover:text-white'}`}>
                   <BarChart3 size={14}/> Faturamento
+                </button>
+                <button onClick={() => setActiveTab('reboque')} className={`flex items-center gap-2 px-8 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${activeTab === 'reboque' ? 'bg-amber-600 text-white shadow-lg shadow-amber-500/40' : 'text-slate-400 hover:text-white'}`}>
+                  <Truck size={14}/> Reboques
                 </button>
               </nav>
 
@@ -747,7 +1177,7 @@
                                   <ComposedChart data={analisesStats.rankingApoios} layout="vertical" margin={{ left: 80, right: 40 }}>
                                       <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" horizontal={false} />
                                       <XAxis type="number" hide />
-                                      <YAxis dataKey="nome" type="category" stroke="#94a3b8" fontSize={10} fontWeight="black" axisLine={false} tickLine={false} width={100} />
+                                      <YAxis dataKey="nome" type="category" stroke="#94a3b8" fontSize={10} fontWeight="bold" axisLine={false} tickLine={false} width={100} />
                                       <Tooltip 
                                           contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px' }}
                                           itemStyle={{ color: '#fff', fontSize: '12px', fontWeight: 'bold' }}
@@ -1082,7 +1512,7 @@
                         })()}
                     </div>
 
-                    <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl">
+                    <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl mt-8">
                         <h4 className="text-sm font-black uppercase text-white tracking-[0.2em] mb-8">Rentabilidade por Tipo de Ocorrência</h4>
                         <div className="overflow-x-auto custom-scrollbar">
                             <table className="w-full text-left text-[11px]">
@@ -1231,7 +1661,7 @@
                                         );
                                     }) : (
                                         <tr>
-                                            <td colSpan="7" className="p-8 text-center text-slate-500 font-bold italic text-xs uppercase tracking-widest">
+                                            <td colSpan="7" className="p-8 text-center text-slate-500 italic text-xs uppercase tracking-widest">
                                                 Nenhum dado compatível extraído da aba de atendimentos. Verifique as colunas de "Cliente" e "Data".
                                             </td>
                                         </tr>
@@ -1241,6 +1671,375 @@
                         </div>
                         )}
                     </div>
+                  </div>
+                )}
+
+                {/* ABA DE REBOQUES */}
+                {activeTab === 'reboque' && (
+                  <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                    <div className="bg-amber-500/5 border border-amber-500/10 p-8 rounded-[2rem] flex flex-col md:flex-row items-start md:items-center justify-between shadow-lg gap-4">
+                      <div>
+                        <h3 className="text-amber-400 font-black text-sm uppercase flex items-center gap-3 tracking-[0.3em]">
+                          <Truck size={24} /> Análise de custos de reboques
+                        </h3>
+                      </div>
+                      {reboqueData.length > 0 && (
+                        <div className="text-right">
+                          <span className="text-3xl font-black text-amber-500">{reboqueStats.totalViagens}</span>
+                          <p className="text-[10px] font-black text-slate-500 uppercase">serviços de reboques filtrados</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {reboqueData.length === 0 ? (
+                      <div className="bg-slate-900/50 p-12 border border-white/5 rounded-[2rem] text-center max-w-xl mx-auto space-y-4 shadow-2xl">
+                        <Truck size={48} className="mx-auto text-amber-500/50 animate-bounce" />
+                        <h4 className="text-lg font-black uppercase text-white tracking-wide">Nenhuma aba "REBOQUE" detectada</h4>
+                        <p className="text-slate-400 text-xs leading-relaxed">
+                          Para analisar reboques, certifique-se de que a planilha carregada contenha uma aba chamada exatamente <strong className="text-amber-400">"REBOQUE"</strong> com as seguintes colunas na ordem padrão:<br />
+                          <code className="bg-black/40 px-2 py-1.5 rounded inline-block text-amber-300 mt-3 border border-slate-800 font-mono text-[10px]">Data, Cliente, Guincheiro, Estado, PLACA, Valor total (Guincheiro), Valor total (Cliente)</code>
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {/* KPI Cards de Reboque */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                          <div className="bg-[#0f172a] p-6 rounded-[2rem] border border-white/5 border-l-8 border-l-blue-600 shadow-2xl">
+                            <p className="text-[10px] font-black text-slate-500 uppercase mb-2 tracking-[0.2em] italic">Faturamento Bruto</p>
+                            <div className="text-3xl font-black text-blue-500">{formatBRL(reboqueStats.faturamentoTotal)}</div>
+                            <p className="text-[9px] text-slate-400 mt-2 font-bold uppercase">Total cobrado dos clientes</p>
+                          </div>
+
+                          <div className="bg-[#0f172a] p-6 rounded-[2rem] border border-white/5 border-l-8 border-l-slate-500 shadow-2xl">
+                            <p className="text-[10px] font-black text-slate-500 uppercase mb-2 tracking-[0.2em] italic">Custo Guincheiros</p>
+                            <div className="text-3xl font-black text-slate-100">{formatBRL(reboqueStats.custoTotal)}</div>
+                            <p className="text-[9px] text-slate-400 mt-2 font-bold uppercase">Total pago aos prestadores</p>
+                          </div>
+
+                          <div className="bg-[#0f172a] p-6 rounded-[2rem] border border-white/5 border-l-8 border-l-amber-500 shadow-2xl">
+                            <p className="text-[10px] font-black text-slate-500 uppercase mb-2 tracking-[0.2em] italic">Lucro Líquido Real (com 20% de imposto descontado)</p>
+                            <div className={`text-3xl font-black ${reboqueStats.lucroLiquidoTotal >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                              {formatBRL(reboqueStats.lucroLiquidoTotal)}
+                            </div>
+                            <p className="text-[9px] text-slate-400 mt-2 font-bold uppercase">Margem Real: {formatPercent(reboqueStats.margemMedia)}</p>
+                          </div>
+
+                          <div className={`bg-[#0f172a] p-6 rounded-[2rem] border shadow-2xl border-l-8 ${reboqueStats.reboquesCriticosCount > 0 ? 'border-red-500/20 border-l-red-500 shadow-red-950/5' : 'border-white/5 border-l-emerald-500'}`}>
+                            <p className="text-[10px] font-black text-slate-500 uppercase mb-2 tracking-[0.2em] italic">Reboques Críticos</p>
+                            <div className={`text-3xl font-black ${reboqueStats.reboquesCriticosCount > 0 ? 'text-red-500 animate-pulse' : 'text-emerald-500'}`}>
+                              {reboqueStats.reboquesCriticosCount}
+                            </div>
+                            <p className="text-[9px] text-slate-400 mt-2 font-bold uppercase">Sem cobrança ou lucro &lt; 16%</p>
+                          </div>
+                        </div>
+
+                        {/* Navegação Secundária para Filtros de Reboque */}
+                        <div className="flex justify-start">
+                          <nav className="flex flex-wrap gap-2 bg-slate-900 p-1.5 rounded-2xl border border-white/5 w-fit">
+                            <button 
+                              onClick={() => setReboqueSubTab('geral')}
+                              className={`px-6 py-2.5 rounded-xl font-black text-[9px] uppercase tracking-wider transition-all ${reboqueSubTab === 'geral' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                            >
+                              Visão Geral
+                            </button>
+                            <button 
+                              onClick={() => setReboqueSubTab('criticos')}
+                              className={`px-6 py-2.5 rounded-xl font-black text-[9px] uppercase tracking-wider transition-all ${reboqueSubTab === 'criticos' ? 'bg-red-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                            >
+                              Prejuízos / Críticos ({reboqueStats.reboquesCriticosCount})
+                            </button>
+                            <button 
+                              onClick={() => setReboqueSubTab('regiao')}
+                              className={`px-6 py-2.5 rounded-xl font-black text-[9px] uppercase tracking-wider transition-all ${reboqueSubTab === 'regiao' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                            >
+                              Reboques por Região
+                            </button>
+                            <button 
+                              onClick={() => setReboqueSubTab('guincheiros')}
+                              className={`px-6 py-2.5 rounded-xl font-black text-[9px] uppercase tracking-wider transition-all ${reboqueSubTab === 'guincheiros' ? 'bg-purple-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                            >
+                              Ranking de Guincheiros
+                            </button>
+                          </nav>
+                        </div>
+
+                        {/* Render de Subtabs */}
+                        {reboqueSubTab === 'geral' && (
+                          <div className="bg-[#0f172a] p-8 rounded-[2.5rem] border border-white/5 shadow-2xl animate-in fade-in duration-300">
+                            <h4 className="text-sm font-black uppercase text-white tracking-[0.2em] mb-2">
+                              {selectedMonth === 'Todos' ? 'Evolução Mensal de Reboques' : `Maiores Clientes em Reboques - ${selectedMonth}`}
+                            </h4>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-6">
+                              {selectedMonth === 'Todos' ? 'Comparativo de faturamento bruto vs custo com guincheiros' : 'Top 10 clientes com maior volume financeiro de reboques'}
+                            </p>
+                            <div className="h-[400px]">
+                              {reboqueByMonth.length > 0 ? (
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <ComposedChart data={selectedMonth === 'Todos' ? reboqueByMonth : reboqueByClient} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                    <XAxis dataKey={selectedMonth === 'Todos' ? 'mes' : 'cliente'} stroke="#94a3b8" fontSize={11} fontWeight="black" axisLine={false} tickLine={false} />
+                                    <YAxis stroke="#94a3b8" fontSize={11} fontWeight="black" axisLine={false} tickLine={false} tickFormatter={(val) => new Intl.NumberFormat('pt-BR', { notation: "compact", compactDisplay: "short" }).format(val)} />
+                                    <Tooltip 
+                                      contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '16px' }}
+                                      itemStyle={{ color: '#ffffff', fontSize: '12px', fontWeight: 'black', textTransform: 'uppercase' }}
+                                      formatter={(value, name) => [formatBRL(value), name]}
+                                    />
+                                    <Legend verticalAlign="top" height={40} />
+                                    <Bar dataKey="faturado" name="Faturamento" fill="#3b82f6" radius={[6, 6, 0, 0]} barSize={32} />
+                                    <Bar dataKey="custo" name="Custo Guincheiro" fill="#ef4444" radius={[6, 6, 0, 0]} barSize={32} />
+                                    <Line type="monotone" dataKey="lucro" name="Lucro Líquido" stroke="#10b981" strokeWidth={3} dot={{ r: 5 }} />
+                                  </ComposedChart>
+                                </ResponsiveContainer>
+                              ) : (
+                                <div className="flex h-full items-center justify-center flex-col text-slate-500">
+                                   <AlertTriangle size={48} className="mb-4 text-slate-600" />
+                                   <p className="font-bold uppercase tracking-widest text-sm">Dados insuficientes</p>
+                                   <p className="text-xs italic mt-2">Gere o upload da planilha com a aba "REBOQUE" para preencher este gráfico.</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {reboqueSubTab === 'criticos' && (
+                          <div className="space-y-6 animate-in fade-in duration-300">
+                            <div className="bg-red-500/10 border border-red-500/20 p-6 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                              <div>
+                                <h4 className="text-red-500 font-black text-sm uppercase flex items-center gap-2">
+                                  <AlertTriangle size={18} /> Auditoria de Operações Críticas
+                                </h4>
+                                <p className="text-slate-400 text-xs mt-1">
+                                  Listagem de reboques onde a RNS perde dinheiro (sem faturamento ou lucro líquido abaixo de 16% do faturamento cobrado).
+                                </p>
+                              </div>
+                              <div className="relative w-full md:w-80">
+                                <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 pointer-events-none">
+                                  <SearchIcon size={14} />
+                                </span>
+                                <input
+                                  type="text"
+                                  placeholder="Filtrar por cliente, placa ou guincheiro..."
+                                  className="w-full pl-9 pr-4 py-2 text-xs bg-black/40 border border-slate-700 rounded-xl text-white placeholder:text-slate-600 focus:outline-none focus:border-red-500 transition-colors"
+                                  value={criticalSearch}
+                                  onChange={(e) => setCriticalSearch(e.target.value)}
+                                />
+                              </div>
+                            </div>
+
+                            <div className="bg-white/[0.02] border border-white/5 rounded-[2rem] overflow-hidden shadow-2xl">
+                              <div className="overflow-y-auto max-h-[500px] custom-scrollbar">
+                                <table className="w-full text-left text-[11px]">
+                                  <thead className="sticky top-0 bg-[#0f172a] z-10 border-b border-white/10 shadow-md">
+                                    <tr className="text-slate-500">
+                                      <th className="p-4 font-black uppercase tracking-wider">Data</th>
+                                      <th className="p-4 font-black uppercase tracking-wider">Placa</th>
+                                      <th className="p-4 font-black uppercase tracking-wider">Cliente</th>
+                                      <th className="p-4 font-black uppercase tracking-wider">Guincheiro</th>
+                                      <th className="p-4 font-black uppercase tracking-wider">Região (UF)</th>
+                                      <th className="p-4 font-black uppercase tracking-wider text-right">Pago (Prestador)</th>
+                                      <th className="p-4 font-black uppercase tracking-wider text-right">Cobrado (Cliente)</th>
+                                      <th className="p-4 font-black uppercase tracking-wider text-right">Lucro Líquido</th>
+                                      <th className="p-4 font-black uppercase tracking-wider text-center">Status de Alerta</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-white/5">
+                                    {(() => {
+                                      const list = filteredReboqueData.filter(d => d.isPrejuizoOuCritico);
+                                      const filteredList = list.filter(item => {
+                                        const s = criticalSearch.toLowerCase();
+                                        return item.cliente.toLowerCase().includes(s) ||
+                                               item.guincheiro.toLowerCase().includes(s) ||
+                                               item.placa.toLowerCase().includes(s) ||
+                                               item.estado.toLowerCase().includes(s);
+                                      });
+
+                                      if (filteredList.length === 0) {
+                                        return (
+                                          <tr>
+                                            <td colSpan="9" className="p-8 text-center text-slate-500 italic">
+                                              Nenhum reboque crítico encontrado para os filtros atuais.
+                                            </td>
+                                          </tr>
+                                        );
+                                      }
+
+                                      return filteredList.map((item, idx) => {
+                                        const isNoCharge = item.valorCliente === 0;
+                                        return (
+                                          <tr key={idx} className="hover:bg-white/5 transition-colors">
+                                            <td className="p-4 text-slate-400 font-medium whitespace-nowrap">{item.dataStr ? item.dataStr.substring(0, 10) : 'N/D'}</td>
+                                            <td className="p-4 font-black text-amber-500 font-mono text-xs">{item.placa || 'N/A'}</td>
+                                            <td className="p-4 font-bold uppercase text-slate-200">{item.cliente}</td>
+                                            <td className="p-4 text-slate-300 font-medium">{item.guincheiro}</td>
+                                            <td className="p-4 font-bold text-center text-slate-400">{item.estado}</td>
+                                            <td className="p-4 text-right font-bold text-slate-300">{formatBRL(item.valorGuincheiro)}</td>
+                                            <td className="p-4 text-right font-black text-blue-400">{formatBRL(item.valorCliente)}</td>
+                                            <td className={`p-4 text-right font-black ${item.lucroLiquido >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                              {formatBRL(item.lucroLiquido)}
+                                            </td>
+                                            <td className="p-4 text-center">
+                                              <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider ${isNoCharge ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
+                                                {isNoCharge ? 'Não Cobrado' : `Margem Baixa (${formatPercent(item.margemLucro)})`}
+                                              </span>
+                                            </td>
+                                          </tr>
+                                        );
+                                      });
+                                    })()}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {reboqueSubTab === 'regiao' && (
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in duration-300">
+                            {/* Gráfico Geográfico Alimentado por Atendimentos de Reboque */}
+                            <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl">
+                              <h4 className="text-sm font-black uppercase text-white tracking-[0.2em] mb-2">Demandas de Reboque por Estado (UF)</h4>
+                              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-6">Volume total baseado na aba granular "Atendimentos de reboque"</p>
+                              <div className="h-[350px]">
+                                {reboqueByRegion.length > 0 ? (
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={reboqueByRegion} layout="vertical" margin={{ left: 50, right: 30 }}>
+                                      <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" horizontal={false} />
+                                      <XAxis type="number" hide />
+                                      <YAxis dataKey="estado" type="category" stroke="#94a3b8" fontSize={11} fontWeight="black" axisLine={false} tickLine={false} />
+                                      <Tooltip cursor={{ fill: '#ffffff05' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px' }} />
+                                      <Bar dataKey="total" name="Atendimentos" fill="#3b82f6" radius={[0, 8, 8, 0]} barSize={16}>
+                                        <LabelList dataKey="total" position="right" fill="#f8fafc" fontSize={11} fontWeight="black" offset={10} />
+                                        {reboqueByRegion.map((entry, index) => (
+                                          <Cell key={`cell-${index}`} fill={index === 0 ? '#d97706' : index === 1 ? '#0284c7' : '#1e293b'} />
+                                        ))}
+                                      </Bar>
+                                    </BarChart>
+                                  </ResponsiveContainer>
+                                ) : (
+                                  <div className="flex h-full items-center justify-center text-slate-500">Nenhum dado geográfico.</div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl flex flex-col justify-between">
+                              <div>
+                                <h4 className="text-sm font-black uppercase text-white tracking-[0.2em] mb-2">Financeiro Consolidado por Estado</h4>
+                                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-4">Mapeamento de custos, faturamento bruto e lucro real líquido por estado</p>
+                              </div>
+                              <div className="overflow-y-auto max-h-[300px] custom-scrollbar flex-1">
+                                <table className="w-full text-left text-[11px]">
+                                  <thead>
+                                    <tr className="border-b border-white/10 text-slate-500">
+                                      <th className="p-3 font-black uppercase">UF</th>
+                                      <th className="p-3 font-black uppercase text-center">Atendimentos</th>
+                                      <th className="p-3 font-black uppercase text-right">Pago</th>
+                                      <th className="p-3 font-black uppercase text-right">Cobrado</th>
+                                      <th className="p-3 font-black uppercase text-right">Lucro Real</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-white/5">
+                                    {reboqueByRegion.map((r, idx) => {
+                                      const margem = r.faturado > 0 ? (r.lucro / r.faturado) : 0;
+                                      return (
+                                        <tr key={`${r.estado}-${idx}`} className="hover:bg-white/5">
+                                          <td className="p-3 font-black text-white">{r.estado}</td>
+                                          <td className="p-3 text-center font-bold text-amber-500">{r.total}</td>
+                                          <td className="p-3 text-right text-slate-400">{formatBRL(r.custo)}</td>
+                                          <td className="p-3 text-right text-blue-400 font-bold">{formatBRL(r.faturado)}</td>
+                                          <td className={`p-3 text-right font-black ${r.lucro >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                            {formatBRL(r.lucro)}
+                                            <span className="block text-[9px] text-slate-500 font-medium">Margem: {formatPercent(margem)}</span>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {reboqueSubTab === 'guincheiros' && (
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in duration-300">
+                            {/* Gráfico de Guincheiros mais chamados por volume baseado na aba granular de Atendimentos */}
+                            <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl">
+                              <h4 className="text-sm font-black uppercase text-white tracking-[0.2em] mb-2">Guincheiros mais Chamados</h4>
+                              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-6">Guincheiros com maior volumetria real na base "Atendimentos de reboque" (Top 10)</p>
+                              <div className="h-[350px]">
+                                {reboqueByGuincheiro.length > 0 ? (
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={[...reboqueByGuincheiro].sort((a,b) => b.total - a.total).slice(0, 10)} layout="vertical" margin={{ left: 120, right: 30 }}>
+                                      <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" horizontal={false} />
+                                      <XAxis type="number" hide />
+                                      <YAxis dataKey="guincheiro" type="category" stroke="#94a3b8" fontSize={10} fontWeight="black" axisLine={false} tickLine={false} width={110} />
+                                      <Tooltip cursor={{ fill: '#ffffff05' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px' }} />
+                                      <Bar dataKey="total" name="Chamados" fill="#8b5cf6" radius={[0, 8, 8, 0]} barSize={14}>
+                                        <LabelList dataKey="total" position="right" fill="#f8fafc" fontSize={10} fontWeight="black" offset={8} />
+                                        {reboqueByGuincheiro.slice(0, 10).map((entry, index) => (
+                                          <Cell key={`cell-${index}`} fill={index === 0 ? '#8b5cf6' : index === 1 ? '#a78bfa' : '#1e293b'} />
+                                        ))}
+                                      </Bar>
+                                    </BarChart>
+                                  </ResponsiveContainer>
+                                ) : (
+                                  <div className="flex h-full items-center justify-center text-slate-500">Nenhum guincheiro.</div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Tabela de performance de guincheiros - LISTA COMPLETA DE GUINCHEIROS ORDENADA POR RENTABILIDADE E COM CHAMADOS DA ABA GRANULAR */}
+                            <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl flex flex-col justify-between">
+                              <div>
+                                <h4 className="text-sm font-black uppercase text-white tracking-[0.2em] mb-2">Dependência e Performance por Guincheiro</h4>
+                                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-4">Lista Completa ordenada por Rentabilidade. Volume de chamados extraído de "Atendimentos de reboque".</p>
+                              </div>
+                              <div className="overflow-y-auto max-h-[450px] custom-scrollbar flex-1">
+                                <table className="w-full text-left text-[11px]">
+                                  <thead>
+                                    <tr className="border-b border-white/10 text-slate-500 bg-[#0f172a] sticky top-0 z-10 shadow-sm">
+                                      <th className="p-3 font-black uppercase">Guincheiro</th>
+                                      <th className="p-3 font-black uppercase text-center text-amber-500">Chamados</th>
+                                      <th className="p-3 font-black uppercase text-right">Pago</th>
+                                      <th className="p-3 font-black uppercase text-right">Cobrado</th>
+                                      <th className="p-3 font-black uppercase text-right text-emerald-400">Rentabilidade</th>
+                                      <th className="p-3 font-black uppercase text-right">Lucro Real</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-white/5">
+                                    {reboqueByGuincheiro.length > 0 ? (
+                                      reboqueByGuincheiro.map((g, idx) => {
+                                        const rentavel = g.rentabilidade >= CRITICAL_MARGIN_THRESHOLD;
+                                        return (
+                                          <tr key={`${g.guincheiro}-${idx}`} className="hover:bg-white/5 transition-colors">
+                                            <td className="p-3 font-black text-white truncate max-w-[130px]" title={g.guincheiro}>{g.guincheiro}</td>
+                                            <td className="p-3 text-center font-bold text-amber-500">{g.total}</td>
+                                            <td className="p-3 text-right text-slate-400">{formatBRL(g.custo)}</td>
+                                            <td className="p-3 text-right text-blue-400 font-bold">{formatBRL(g.faturado)}</td>
+                                            <td className={`p-3 text-right font-black ${rentavel ? 'text-emerald-500' : 'text-red-500 bg-red-500/5'}`}>
+                                              {formatPercent(g.rentabilidade)}
+                                            </td>
+                                            <td className={`p-3 text-right font-black ${g.lucro >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                              {formatBRL(g.lucro)}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })
+                                    ) : (
+                                      <tr>
+                                        <td colSpan="6" className="p-8 text-center text-slate-500 italic">
+                                          Carregue os dados da aba REBOQUE para listar os guincheiros.
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 )}
               </main>
