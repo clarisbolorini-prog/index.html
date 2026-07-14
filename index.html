@@ -22,8 +22,8 @@
     <!-- Recharts (Gráficos) -->
     <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
 
-    <!-- SheetJS -->
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <!-- SheetJS - Trocado para o CDNJS para maior estabilidade e evitar bloqueios -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
     <style>
         body { 
@@ -182,8 +182,13 @@
                       const idxStatus = headers.findIndex(h => h.includes('status') || h.includes('recuperado') || h.includes('recuperação') || h.includes('resultado'));
                       const idxRegiao = headers.findIndex(h => h.includes('estado') || h.includes('uf') || h.includes('região') || h.includes('regiao'));
                       
-                      const idxCliente = 4;
-                      const idxData = 25;
+                      let idxCliente = headers.findIndex(h => h === 'cliente' || h === 'empresa' || h.includes('cliente'));
+                      if (idxCliente === -1) idxCliente = 4;
+                      
+                      let idxData = headers.findIndex(h => h === 'data' || h.includes('data acionamento') || h.includes('data do acionamento'));
+                      if (idxData === -1) idxData = 25;
+                      
+                      let idxHora = headers.findIndex(h => h === 'hora' || h === 'horário' || h === 'horario' || h.includes('hora acionamento'));
 
                       for (let i = 1; i < rows.length; i++) {
                           const row = rows[i];
@@ -213,8 +218,37 @@
                           }
                           if (dataExata && isNaN(dataExata.getTime())) dataExata = null;
 
+                          let horaParseada = null;
+                          if (idxHora !== -1 && row[idxHora] !== undefined && row[idxHora] !== null && row[idxHora] !== '') {
+                              const horaRaw = row[idxHora];
+                              if (typeof horaRaw === 'number') {
+                                  const fraction = horaRaw - Math.floor(horaRaw);
+                                  horaParseada = Math.floor(fraction * 24);
+                              } else if (typeof horaRaw === 'string') {
+                                  const match = horaRaw.match(/(\d{1,2}):(\d{2})/);
+                                  if (match) horaParseada = parseInt(match[1], 10);
+                              } else if (horaRaw instanceof Date) {
+                                  horaParseada = horaRaw.getHours();
+                              }
+                          }
+                          
+                          // Se a hora não foi encontrada, tenta extrair da própria coluna de Data (frações no Excel ou String com horário)
+                          if (horaParseada === null && rawDate !== undefined && rawDate !== null && rawDate !== '') {
+                              if (typeof rawDate === 'number') {
+                                  const fraction = rawDate - Math.floor(rawDate);
+                                  if (fraction > 0) {
+                                      horaParseada = Math.floor(fraction * 24);
+                                  }
+                              } else if (typeof rawDate === 'string') {
+                                  const match = rawDate.match(/(\d{1,2}):(\d{2})/);
+                                  if (match) horaParseada = parseInt(match[1], 10);
+                              } else if (rawDate instanceof Date) {
+                                  horaParseada = rawDate.getHours();
+                              }
+                          }
+
                           if (apoio !== "Não Informado" || status !== "Indefinido") {
-                              atendimentosResult.push({ apoio, status, regiao, mes: mesFormatado, cliente, dataExata });
+                              atendimentosResult.push({ apoio, status, regiao, mes: mesFormatado, cliente, dataExata, hora: horaParseada });
                           }
                       }
                       return; 
@@ -464,14 +498,21 @@
             const file = e.target.files[0];
             if (!file) return;
 
+            if (!window.XLSX) {
+                alert("A biblioteca do Excel não pôde ser carregada. Verifique sua conexão de internet ou se o seu navegador está bloqueando scripts (AdBlock, etc).");
+                return;
+            }
+
             const reader = new FileReader();
             reader.onload = (event) => {
               try {
-                const workbook = XLSX.read(event.target.result, { type: 'array' });
+                const workbook = window.XLSX.read(event.target.result, { type: 'array' });
                 processWorkbook(workbook);
               } catch (error) {
-                alert("Erro ao ler o ficheiro. Confirme se é um ficheiro Excel (.xlsx) estruturado corretamente.");
-                console.error(error);
+                alert(`Erro de leitura do arquivo: ${error.message || error}. Confirme se não está corrompido.`);
+                console.error("Erro no XLSX.read:", error);
+              } finally {
+                e.target.value = ''; // Permite subir o mesmo arquivo novamente
               }
             };
             reader.readAsArrayBuffer(file);
@@ -482,6 +523,12 @@
                 alert("Por favor, insira um link válido.");
                 return;
             }
+
+            if (!window.XLSX) {
+                alert("A biblioteca do Excel não pôde ser carregada. Verifique sua conexão de internet ou se o seu navegador está bloqueando scripts (AdBlock, etc).");
+                return;
+            }
+
             setIsLoadingUrl(true);
             try {
                 let fetchUrl = sheetUrl.trim();
@@ -499,7 +546,7 @@
                 }
                 
                 const arrayBuffer = await response.arrayBuffer();
-                const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+                const workbook = window.XLSX.read(arrayBuffer, { type: 'array' });
                 processWorkbook(workbook);
             } catch (err) {
                 alert("Erro ao carregar link: " + err.message);
@@ -836,13 +883,32 @@
                 ? atendimentosData 
                 : atendimentosData.filter(d => d.mes === selectedMonth.toUpperCase());
 
-            if (baseData.length === 0) return { rankingApoios: [], statusData: [], regiaoData: [], total: 0 };
+            if (baseData.length === 0) return { 
+                rankingApoios: [], statusData: [], regiaoData: [], 
+                dailyData: [], timeRangeMap: { "07:00 - 16:00": 0, "16:00 - 23:00": 0, "23:00 - 07:00": 0, "Sem Informação": 0 }, 
+                carteiraMap: { "Localiza": 0, "Autotrac": 0, "Outros": 0 }, 
+                total: 0, mediaDia: 0, panoramaData: [],
+                top10Data: [], top10Total: 0, representacaoVolumeData: []
+            };
 
             const apoiosMap = {};
             const statusMap = { "Recuperado": 0, "Não Recuperado": 0 };
             const regiaoMap = {};
 
+            const dailyMap = {};
+            const timeRangeMap = { "07:00 - 16:00": 0, "16:00 - 23:00": 0, "23:00 - 07:00": 0, "Sem Informação": 0 };
+            const carteiraMap = { "Localiza": 0, "Autotrac": 0, "Outros": 0 };
+            let totalAtendimentos = 0;
+            let daysSet = new Set();
+            
+            // Novos contadores para TOP 10 e Representação
+            const clienteCounts = {};
+            let localizaVolume = 0;
+
             baseData.forEach(d => {
+                totalAtendimentos++;
+
+                /* --- LÓGICA ANTIGA (Apoios e Regiões) --- */
                 if (!apoiosMap[d.apoio]) apoiosMap[d.apoio] = { nome: d.apoio, total: 0, recuperados: 0 };
                 apoiosMap[d.apoio].total += 1;
                 
@@ -861,8 +927,52 @@
                 if (isSuccess) {
                     regiaoMap[d.regiao].recuperados += 1;
                 }
+
+                // --- LÓGICA NOVA: Top 10 e Donut ---
+                const cliName = d.cliente ? d.cliente.trim() : 'Sem Nome';
+                const cliLower = cliName.toLowerCase();
+                
+                if (cliLower.includes('localiza')) {
+                    localizaVolume++;
+                } else {
+                    if (!clienteCounts[cliName]) clienteCounts[cliName] = 0;
+                    clienteCounts[cliName]++;
+                }
+
+                /* --- LÓGICA NOVA (Painéis Baseados na Imagem) --- */
+                
+                // Distribuição de Carteira (Localiza, Autotrac, Outros)
+                const cli = d.cliente ? d.cliente.toLowerCase() : '';
+                let carteira = 'Outros';
+                if (cli.includes('localiza')) carteira = 'Localiza';
+                else if (cli.includes('autotrac')) carteira = 'Autotrac';
+                carteiraMap[carteira]++;
+
+                // Atendimentos por Dia
+                if (d.dataExata) {
+                    const diaDoMes = d.dataExata.getDate();
+                    const weekDay = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"][d.dataExata.getDay()];
+                    const dayStr = `${diaDoMes}/${weekDay}`;
+                    const rawDate = d.dataExata.getTime(); 
+                    if (!dailyMap[dayStr]) {
+                        dailyMap[dayStr] = { dia: dayStr, Localiza: 0, Autotrac: 0, Outros: 0, Total: 0, _ts: rawDate };
+                    }
+                    dailyMap[dayStr][carteira]++;
+                    dailyMap[dayStr].Total++;
+                    daysSet.add(dayStr);
+                }
+
+                // Tabela Faixa / Hora
+                if (d.hora !== null && d.hora !== undefined && !isNaN(d.hora)) {
+                    if (d.hora >= 7 && d.hora < 16) timeRangeMap["07:00 - 16:00"]++;
+                    else if (d.hora >= 16 && d.hora < 23) timeRangeMap["16:00 - 23:00"]++;
+                    else timeRangeMap["23:00 - 07:00"]++;
+                } else {
+                    timeRangeMap["Sem Informação"]++;
+                }
             });
 
+            // Fechamento Lógica Antiga
             const rankingApoios = Object.values(apoiosMap)
                 .map(a => ({ ...a, taxaSucesso: a.total > 0 ? (a.recuperados / a.total) * 100 : 0 }))
                 .sort((a, b) => b.total - a.total)
@@ -879,7 +989,45 @@
                 .map(r => ({ ...r, taxaSucesso: r.total > 0 ? (r.recuperados / r.total) * 100 : 0 }))
                 .sort((a,b) => b.total - a.total);
 
-            return { rankingApoios, statusData, regiaoData, total: baseData.length };
+            // Fechamento Lógica Nova
+            const dailyData = Object.values(dailyMap).sort((a, b) => a._ts - b._ts);
+            const mediaDia = daysSet.size > 0 ? (totalAtendimentos / daysSet.size).toFixed(1) : 0;
+
+            // Panorama Evolutivo Mensal (Gráfico do canto inferior direito)
+            const panoramaMap = {};
+            atendimentosData.forEach(d => {
+                if (d.mes === "TODOS" || !d.mes) return;
+                if (!panoramaMap[d.mes]) {
+                    panoramaMap[d.mes] = { mes: d.mes, Localiza: 0, Autotrac: 0, Outros: 0, Total: 0 };
+                }
+                const cli = d.cliente ? d.cliente.toLowerCase() : '';
+                let carteira = 'Outros';
+                if (cli.includes('localiza')) carteira = 'Localiza';
+                else if (cli.includes('autotrac')) carteira = 'Autotrac';
+                
+                panoramaMap[d.mes][carteira]++;
+                panoramaMap[d.mes].Total++;
+            });
+            const ordemMeses = ["JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
+            const panoramaData = Object.values(panoramaMap).sort((a, b) => ordemMeses.indexOf(a.mes) - ordemMeses.indexOf(b.mes)).slice(-6);
+
+            // Fechamento Lógica Nova: Top 10 e Donut
+            const clientesRestantes = Object.entries(clienteCounts).map(([nome, volume]) => ({ nome, volume })).sort((a, b) => b.volume - a.volume);
+            const top10Data = clientesRestantes.slice(0, 10);
+            const top10Total = top10Data.reduce((acc, curr) => acc + curr.volume, 0);
+            const demaisVolume = clientesRestantes.slice(10).reduce((acc, curr) => acc + curr.volume, 0);
+
+            const representacaoVolumeData = [
+                { name: 'Localiza', value: localizaVolume, fill: '#10b981' },
+                { name: 'Top 10', value: top10Total, fill: '#0284c7' },
+                { name: 'Demais', value: demaisVolume, fill: '#9ca3af' }
+            ].filter(item => item.value > 0);
+
+            return { 
+                rankingApoios, statusData, regiaoData,
+                dailyData, timeRangeMap, carteiraMap, total: totalAtendimentos, mediaDia, panoramaData,
+                top10Data, top10Total, representacaoVolumeData
+            };
           }, [atendimentosData, selectedMonth]);
 
           useEffect(() => {
@@ -1157,17 +1305,186 @@
 
                 {activeTab === 'analises' && analisesStats && (
                   <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-                    <div className="bg-purple-500/5 border border-purple-500/10 p-8 rounded-[2rem] flex items-center justify-between shadow-lg">
+                    
+                    {/* Cabeçalho */}
+                    <div className="bg-purple-500/5 border border-purple-500/10 p-8 rounded-[2rem] flex flex-col md:flex-row items-start md:items-center justify-between shadow-lg gap-4">
                       <div>
                         <h3 className="text-purple-400 font-black text-sm uppercase flex items-center gap-3 tracking-[0.3em]">
-                          <PieChartIcon size={24} /> Análises de Performance
+                          <PieChartIcon size={24} /> Análises de Performance e Ocorrências
                         </h3>
-                        <p className="text-slate-400 text-xs mt-2 font-bold uppercase italic">Métricas baseadas na aba geral de Atendimentos filtradas por {selectedMonth}. (Total: {analisesStats.total} O.S. analisadas)</p>
+                        <p className="text-slate-400 text-xs mt-2 font-bold uppercase italic">
+                          Visão abrangente consolidada da aba de Atendimentos.
+                        </p>
+                      </div>
+                      <div className="text-left md:text-right">
+                        <span className="text-3xl font-black text-purple-400">{analisesStats.total}</span>
+                        <p className="text-[10px] font-black text-slate-500 uppercase">O.S. Analisadas {selectedMonth === 'Todos' ? '(Total)' : `em ${selectedMonth}`}</p>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* --- INÍCIO: PAINÉIS NOVOS (REFERÊNCIA DA IMAGEM) --- */}
+                    
+                    {/* Gráfico de Atendimentos Diários (Qtd/Dia) */}
+                    <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl">
+                         <div className="flex flex-col items-center justify-center mb-8 gap-2 relative">
+                             <div className="flex gap-10">
+                                 <div className="text-center">
+                                     <p className="text-[11px] font-bold text-slate-400 mb-1 border-b-2 border-red-500/50 pb-1">Qtd/Dia {selectedMonth === 'Todos' ? '' : selectedMonth}</p>
+                                 </div>
+                                 <div className="text-center flex flex-col items-center">
+                                     <p className="text-[11px] font-bold text-slate-400 mb-1">Total</p>
+                                     <p className="text-xl font-black bg-yellow-400 text-black px-4 py-0.5 rounded shadow-lg">{analisesStats.total}</p>
+                                 </div>
+                                 <div className="text-center flex flex-col items-center">
+                                     <p className="text-[11px] font-bold text-slate-400 mb-1">Média/Dia</p>
+                                     <p className="text-xl font-black bg-transparent text-yellow-400 px-4 py-0.5">{String(analisesStats.mediaDia).replace('.', ',')}</p>
+                                 </div>
+                             </div>
+                         </div>
+
+                         <div className="h-[350px]">
+                            {analisesStats.dailyData.length > 0 ? (
+                             <ResponsiveContainer width="100%" height="100%">
+                                 <BarChart data={analisesStats.dailyData} margin={{ top: 30, right: 0, bottom: 20, left: -20 }}>
+                                     <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                     <XAxis dataKey="dia" stroke="#94a3b8" fontSize={11} fontWeight="bold" axisLine={false} tickLine={false} />
+                                     <YAxis hide />
+                                     <Tooltip cursor={{ fill: '#ffffff05' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px' }} />
+                                     
+                                     <Legend verticalAlign="bottom" height={36} iconType="square" wrapperStyle={{ fontSize: '11px', fontWeight: 'bold' }} />
+                                     <Bar dataKey="Localiza" name="Localiza" fill="#10b981" barSize={14}>
+                                         <LabelList dataKey="Localiza" position="top" fill="#10b981" fontSize={11} fontWeight="bold" formatter={(v) => v > 0 ? v : ''} />
+                                     </Bar>
+                                     <Bar dataKey="Autotrac" name="Autotrac" fill="#64748b" barSize={14}>
+                                         <LabelList dataKey="Autotrac" position="top" fill="#64748b" fontSize={11} fontWeight="bold" formatter={(v) => v > 0 ? v : ''} />
+                                     </Bar>
+                                     <Bar dataKey="Outros" name="Outros" fill="#cbd5e1" barSize={14}>
+                                         <LabelList dataKey="Outros" position="top" fill="#cbd5e1" fontSize={11} fontWeight="bold" formatter={(v) => v > 0 ? v : ''} />
+                                     </Bar>
+                                     <Bar dataKey="Total" name="Total" fill="#0ea5e9" barSize={14}>
+                                         <LabelList dataKey="Total" position="top" fill="#0ea5e9" fontSize={12} fontWeight="black" formatter={(v) => v > 0 ? v : ''} />
+                                     </Bar>
+                                 </BarChart>
+                             </ResponsiveContainer>
+                            ) : (
+                                <div className="flex h-full items-center justify-center text-slate-500 font-bold uppercase tracking-widest text-xs">Sem dados diários válidos para este mês</div>
+                            )}
+                         </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        {/* Col 1: Faixa de Hora */}
+                        <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl flex flex-col justify-start">
+                            <h4 className="text-sm font-black text-slate-400 text-center mb-6">Volumetria por Faixa de Horário</h4>
+                            <div className="overflow-hidden rounded-xl border border-slate-700/50 shadow-lg mt-2">
+                                <table className="w-full text-center text-sm">
+                                    <thead>
+                                        <tr className="bg-[#1e3a5f] text-white">
+                                            <th className="p-4 font-black border-b border-slate-700/50">Faixa/hora</th>
+                                            <th className="p-4 font-black border-b border-slate-700/50">Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="bg-slate-800 text-slate-200 font-bold">
+                                        <tr className="hover:bg-slate-700/50 transition-colors">
+                                            <td className="p-4 border-b border-slate-700/50">07:00 - 16:00</td>
+                                            <td className="p-4 border-b border-slate-700/50 bg-slate-700/20">{analisesStats.timeRangeMap["07:00 - 16:00"]}</td>
+                                        </tr>
+                                        <tr className="bg-slate-700/30 hover:bg-slate-700/50 transition-colors">
+                                            <td className="p-4 border-b border-slate-700/50">16:00 - 23:00</td>
+                                            <td className="p-4 border-b border-slate-700/50 bg-slate-700/20">{analisesStats.timeRangeMap["16:00 - 23:00"]}</td>
+                                        </tr>
+                                        <tr className="hover:bg-slate-700/50 transition-colors">
+                                            <td className="p-4 border-b border-slate-700/50">23:00 - 07:00</td>
+                                            <td className="p-4 border-b border-slate-700/50 bg-slate-700/20">{analisesStats.timeRangeMap["23:00 - 07:00"]}</td>
+                                        </tr>
+                                        {analisesStats.timeRangeMap["Sem Informação"] > 0 && (
+                                            <tr className="bg-slate-700/30 text-slate-400 hover:bg-slate-700/50 transition-colors">
+                                                <td className="p-3 border-b border-slate-700/50 text-xs">Sem Info / Vazio</td>
+                                                <td className="p-3 border-b border-slate-700/50 bg-slate-700/20 text-xs">{analisesStats.timeRangeMap["Sem Informação"]}</td>
+                                            </tr>
+                                        )}
+                                        <tr className="bg-slate-200 text-slate-900 font-black text-sm">
+                                            <td className="p-4">Total Geral</td>
+                                            <td className="p-4">{analisesStats.timeRangeMap["07:00 - 16:00"] + analisesStats.timeRangeMap["16:00 - 23:00"] + analisesStats.timeRangeMap["23:00 - 07:00"] + analisesStats.timeRangeMap["Sem Informação"]}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        {/* Col 2: Distribuição por carteira */}
+                        <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl flex flex-col justify-start">
+                            <h4 className="text-sm font-black text-white text-center mb-1 decoration-red-500 underline decoration-2 underline-offset-4">Distribuição por carteira {selectedMonth === 'Todos' ? '' : selectedMonth}</h4>
+                            
+                            <div className="h-[250px] mt-8">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={[
+                                        { name: 'Localiza', value: analisesStats.carteiraMap['Localiza'], fill: '#10b981' },
+                                        { name: 'Autotrac', value: analisesStats.carteiraMap['Autotrac'], fill: '#64748b' },
+                                        { name: 'Outros', value: analisesStats.carteiraMap['Outros'], fill: '#cbd5e1' }
+                                    ]} margin={{top: 30, right: 10, left: -20, bottom: 20}}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                        <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} fontWeight="bold" axisLine={false} tickLine={false} />
+                                        <YAxis hide />
+                                        <Tooltip cursor={{ fill: '#ffffff05' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px' }} />
+                                        <Legend verticalAlign="bottom" iconType="square" wrapperStyle={{ fontSize: '11px', fontWeight: 'bold', bottom: -10 }} />
+                                        <Bar dataKey="value" barSize={32}>
+                                            { [
+                                                { name: 'Localiza', value: analisesStats.carteiraMap['Localiza'], fill: '#10b981' },
+                                                { name: 'Autotrac', value: analisesStats.carteiraMap['Autotrac'], fill: '#64748b' },
+                                                { name: 'Outros', value: analisesStats.carteiraMap['Outros'], fill: '#cbd5e1' }
+                                              ].map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={entry.fill} />
+                                            ))}
+                                            <LabelList dataKey="value" position="top" fill="#fff" fontSize={14} fontWeight="black" formatter={(v) => v > 0 ? v : ''} />
+                                        </Bar>
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                        {/* Col 3: Panorama Mensal */}
+                        <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl flex flex-col justify-start">
+                            <h4 className="text-sm font-black text-slate-400 text-center mb-6">Panorama Mensal (Total)</h4>
+                            
+                            <div className="h-[280px]">
+                                {analisesStats.panoramaData.length > 0 ? (
+                                 <ResponsiveContainer width="100%" height="100%">
+                                     <BarChart data={analisesStats.panoramaData} layout="vertical" margin={{ top: 0, right: 40, bottom: 0, left: 10 }}>
+                                         <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" horizontal={false} />
+                                         <XAxis type="number" hide />
+                                         <YAxis dataKey="mes" type="category" stroke="#94a3b8" fontSize={11} fontWeight="bold" axisLine={false} tickLine={false} tickFormatter={(val) => val.substring(0,3)} width={40} />
+                                         <Tooltip cursor={{ fill: '#ffffff05' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px' }} />
+                                         
+                                         <Legend verticalAlign="bottom" iconType="square" wrapperStyle={{ fontSize: '9px', fontWeight: 'bold' }} />
+                                         
+                                         <Bar dataKey="Outros" name="Outros" fill="#cbd5e1" barSize={8}>
+                                            <LabelList dataKey="Outros" position="right" fill="#cbd5e1" fontSize={9} fontWeight="bold" formatter={(v) => v > 0 ? v : ''} />
+                                         </Bar>
+                                         <Bar dataKey="Autotrac" name="Autotrac" fill="#64748b" barSize={8}>
+                                            <LabelList dataKey="Autotrac" position="right" fill="#64748b" fontSize={9} fontWeight="bold" formatter={(v) => v > 0 ? v : ''} />
+                                         </Bar>
+                                         <Bar dataKey="Localiza" name="Localiza" fill="#10b981" barSize={8}>
+                                            <LabelList dataKey="Localiza" position="right" fill="#10b981" fontSize={9} fontWeight="bold" formatter={(v) => v > 0 ? v : ''} />
+                                         </Bar>
+                                         <Bar dataKey="Total" name="Total" fill="#0ea5e9" barSize={8}>
+                                             <LabelList dataKey="Total" position="right" fill="#fbbf24" fontSize={10} fontWeight="black" formatter={(v) => v > 0 ? v : ''} />
+                                         </Bar>
+                                     </BarChart>
+                                 </ResponsiveContainer>
+                                ) : (
+                                  <div className="flex h-full items-center justify-center text-slate-500 font-bold uppercase tracking-widest text-xs text-center">Sem dados</div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+
+                    {/* --- INÍCIO: PAINÉIS ANTIGOS RESTAURADOS E INTEGRAOS --- */}
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
                       
+                      {/* Apoios Mais Acionados */}
                       <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl">
                           <h4 className="text-sm font-black uppercase text-white tracking-[0.2em] mb-1">Apoios Mais Acionados</h4>
                           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-6">Volume total vs Efetividade (% Recuperação)</p>
@@ -1195,9 +1512,10 @@
                       </div>
 
                       <div className="flex flex-col gap-6">
+                        {/* Índice de Recuperação */}
                         <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl flex-1 flex flex-col">
                             <h4 className="text-sm font-black uppercase text-white tracking-[0.2em] mb-1">Índice de Recuperação</h4>
-                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-2">Recuperado vs Não recuperado ({selectedMonth})</p>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-2">Recuperado vs Não recuperado</p>
                             <div className="flex-1 flex items-center justify-center h-[200px]">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <PieChart>
@@ -1232,8 +1550,9 @@
                             </div>
                         </div>
 
+                        {/* Densidade Geográfica vs Índice de recuperação */}
                         <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl flex-1">
-                            <h4 className="text-sm font-black uppercase text-white tracking-[0.2em] mb-1">Densidade Geográfica vs Indice de recuperação</h4>
+                            <h4 className="text-sm font-black uppercase text-white tracking-[0.2em] mb-1">Densidade Geográfica vs Índice de recuperação</h4>
                             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-6">Volume de O.S. (Barra) e Taxa de Recuperação (Linha)</p>
                             <div className="h-[200px]">
                                 <ResponsiveContainer width="100%" height="100%">
@@ -1261,6 +1580,85 @@
                       </div>
 
                     </div>
+
+                    {/* --- INÍCIO: PAINEL TOP 10 E REPRESENTAÇÃO --- */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
+                        {/* Top 10 Clientes */}
+                        <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl flex flex-col relative">
+                            <div className="flex justify-center items-center mb-6">
+                                <h4 className="text-lg font-black uppercase text-white tracking-widest mr-4">TOP 10</h4>
+                                <div className="text-center flex flex-col items-center">
+                                     <p className="text-[10px] font-bold text-slate-400 mb-1 leading-none">Total</p>
+                                     <p className="text-lg font-black bg-yellow-400 text-black px-3 py-0.5 rounded shadow-lg leading-none">{analisesStats.top10Total}</p>
+                                 </div>
+                            </div>
+                            
+                            <div className="h-[300px] w-full mt-auto">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={analisesStats.top10Data} margin={{ top: 30, right: 0, bottom: 20, left: -20 }}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                        <XAxis dataKey="nome" stroke="#94a3b8" fontSize={9} fontWeight="bold" axisLine={false} tickLine={false} interval={0} tickFormatter={(val) => val && val.length > 10 ? val.substring(0, 10) + '...' : val} />
+                                        <YAxis hide />
+                                        <Tooltip cursor={{ fill: '#ffffff05' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px' }} />
+                                        <Bar dataKey="volume" fill="#3b82f6" barSize={24} radius={[4, 4, 0, 0]}>
+                                            <LabelList dataKey="volume" position="top" content={(props) => {
+                                              const { x, y, width, value } = props;
+                                              const boxWidth = 24;
+                                              const boxHeight = 16;
+                                              return (
+                                                <g>
+                                                  <rect x={x + width / 2 - boxWidth / 2} y={y - boxHeight - 4} width={boxWidth} height={boxHeight} fill="#facc15" rx={2} />
+                                                  <text x={x + width / 2} y={y - 12} fill="#000" textAnchor="middle" dominantBaseline="middle" fontSize="10" fontWeight="bold">
+                                                    {value}
+                                                  </text>
+                                                </g>
+                                              );
+                                            }} />
+                                        </Bar>
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                        {/* Representação por Volume */}
+                        <div className="bg-[#0f172a] p-8 rounded-[2rem] border border-white/5 shadow-2xl flex flex-col items-center justify-center">
+                            <h4 className="text-sm font-black uppercase text-white tracking-[0.2em] mb-2 text-center">Representação por volume de atendimento</h4>
+                            <div className="w-full h-[300px] flex items-center justify-center">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie 
+                                            data={analisesStats.representacaoVolumeData} 
+                                            cx="50%" cy="50%" 
+                                            innerRadius={80} outerRadius={110} 
+                                            paddingAngle={2} dataKey="value" stroke="none"
+                                            labelLine={false}
+                                            label={({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
+                                                const radius = innerRadius + (outerRadius - innerRadius) * 0.5 + 45;
+                                                const x = cx + radius * Math.cos(-midAngle * Math.PI / 180);
+                                                const y = cy + radius * Math.sin(-midAngle * Math.PI / 180);
+                                                return percent > 0 ? (
+                                                    <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={14} fontWeight="black">
+                                                        {`${(percent * 100).toFixed(1)}%`}
+                                                    </text>
+                                                ) : null;
+                                            }}
+                                        >
+                                            {analisesStats.representacaoVolumeData.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={entry.fill} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip 
+                                            contentStyle={{ backgroundColor: '#0f172a', border: 'none', borderRadius: '12px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}
+                                            itemStyle={{ color: '#fff', fontWeight: 'bold' }}
+                                        />
+                                        <Legend layout="vertical" verticalAlign="middle" align="right" iconType="square" wrapperStyle={{ fontSize: '12px', fontWeight: 'bold', color: '#94a3b8' }} />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+                    </div>
+                    {/* --- FIM: PAINEL TOP 10 E REPRESENTAÇÃO --- */}
+
                   </div>
                 )}
 
